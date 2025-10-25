@@ -1,0 +1,234 @@
+-- 密钥系统主脚本
+local KeySystem = {}
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+-- 配置
+local CONFIG = {
+    CorrectKey = "ROBLOX-2024-PREMIUM", -- 你的密钥
+    SaveKey = true, -- 是否保存密钥
+    KeyLink = "https://your-website.com/getkey" -- 获取密钥的链接
+}
+
+-- 创建 UI
+function KeySystem:CreateUI()
+    local player = Players.LocalPlayer
+    local playerGui = player:WaitForChild("PlayerGui")
+    
+    -- 主界面
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "KeySystemGui"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.Parent = playerGui
+    
+    -- 背景模糊
+    local Blur = Instance.new("Frame")
+    Blur.Name = "Blur"
+    Blur.Size = UDim2.new(1, 0, 1, 0)
+    Blur.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    Blur.BackgroundTransparency = 0.5
+    Blur.Parent = ScreenGui
+    
+    -- 主框架
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 400, 0, 250)
+    MainFrame.Position = UDim2.new(0.5, -200, 0.5, -125)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Parent = ScreenGui
+    
+    -- 圆角
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 12)
+    Corner.Parent = MainFrame
+    
+    -- 标题
+    local Title = Instance.new("TextLabel")
+    Title.Name = "Title"
+    Title.Size = UDim2.new(1, 0, 0, 50)
+    Title.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    Title.BorderSizePixel = 0
+    Title.Text = "🔐 密钥验证系统"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 20
+    Title.Font = Enum.Font.GothamBold
+    Title.Parent = MainFrame
+    
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 12)
+    TitleCorner.Parent = Title
+    
+    -- 输入框
+    local KeyInput = Instance.new("TextBox")
+    KeyInput.Name = "KeyInput"
+    KeyInput.Size = UDim2.new(0.85, 0, 0, 40)
+    KeyInput.Position = UDim2.new(0.075, 0, 0.3, 0)
+    KeyInput.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    KeyInput.BorderSizePixel = 0
+    KeyInput.PlaceholderText = "请输入密钥..."
+    KeyInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+    KeyInput.Text = ""
+    KeyInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    KeyInput.TextSize = 16
+    KeyInput.Font = Enum.Font.Gotham
+    KeyInput.ClearTextOnFocus = false
+    KeyInput.Parent = MainFrame
+    
+    local InputCorner = Instance.new("UICorner")
+    InputCorner.CornerRadius = UDim.new(0, 8)
+    InputCorner.Parent = KeyInput
+    
+    -- 验证按钮
+    local VerifyButton = Instance.new("TextButton")
+    VerifyButton.Name = "VerifyButton"
+    VerifyButton.Size = UDim2.new(0.85, 0, 0, 40)
+    VerifyButton.Position = UDim2.new(0.075, 0, 0.55, 0)
+    VerifyButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+    VerifyButton.BorderSizePixel = 0
+    VerifyButton.Text = "✓ 验证密钥"
+    VerifyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    VerifyButton.TextSize = 16
+    VerifyButton.Font = Enum.Font.GothamBold
+    VerifyButton.Parent = MainFrame
+    
+    local VerifyCorner = Instance.new("UICorner")
+    VerifyCorner.CornerRadius = UDim.new(0, 8)
+    VerifyCorner.Parent = VerifyButton
+    
+    -- 获取密钥按钮
+    local GetKeyButton = Instance.new("TextButton")
+    GetKeyButton.Name = "GetKeyButton"
+    GetKeyButton.Size = UDim2.new(0.85, 0, 0, 35)
+    GetKeyButton.Position = UDim2.new(0.075, 0, 0.78, 0)
+    GetKeyButton.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+    GetKeyButton.BorderSizePixel = 0
+    GetKeyButton.Text = "🔗 获取密钥"
+    GetKeyButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+    GetKeyButton.TextSize = 14
+    GetKeyButton.Font = Enum.Font.Gotham
+    GetKeyButton.Parent = MainFrame
+    
+    local GetKeyCorner = Instance.new("UICorner")
+    GetKeyCorner.CornerRadius = UDim.new(0, 8)
+    GetKeyCorner.Parent = GetKeyButton
+    
+    -- 状态提示
+    local StatusLabel = Instance.new("TextLabel")
+    StatusLabel.Name = "StatusLabel"
+    StatusLabel.Size = UDim2.new(0.85, 0, 0, 20)
+    StatusLabel.Position = UDim2.new(0.075, 0, 0.95, 0)
+    StatusLabel.BackgroundTransparency = 1
+    StatusLabel.Text = ""
+    StatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    StatusLabel.TextSize = 12
+    StatusLabel.Font = Enum.Font.Gotham
+    StatusLabel.Parent = MainFrame
+    
+    return {
+        ScreenGui = ScreenGui,
+        MainFrame = MainFrame,
+        KeyInput = KeyInput,
+        VerifyButton = VerifyButton,
+        GetKeyButton = GetKeyButton,
+        StatusLabel = StatusLabel
+    }
+end
+
+-- 显示状态消息
+function KeySystem:ShowStatus(ui, message, isSuccess)
+    ui.StatusLabel.Text = message
+    ui.StatusLabel.TextColor3 = isSuccess and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    
+    -- 抖动效果（如果失败）
+    if not isSuccess then
+        local shake = TweenService:Create(
+            ui.MainFrame,
+            TweenInfo.new(0.05, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, 0, true),
+            {Position = UDim2.new(0.5, -190, 0.5, -125)}
+        )
+        shake:Play()
+        shake.Completed:Wait()
+        ui.MainFrame.Position = UDim2.new(0.5, -200, 0.5, -125)
+    end
+end
+
+-- 验证密钥
+function KeySystem:VerifyKey(key)
+    -- 这里可以添加更复杂的验证逻辑
+    if key == CONFIG.CorrectKey then
+        return true
+    end
+    return false
+end
+
+-- 保存密钥
+function KeySystem:SaveKey(key)
+    if CONFIG.SaveKey then
+        writefile("key.txt", key) -- 需要 exploit 支持
+    end
+end
+
+-- 加载保存的密钥
+function KeySystem:LoadKey()
+    if CONFIG.SaveKey and isfile and isfile("key.txt") then
+        return readfile("key.txt")
+    end
+    return nil
+end
+
+-- 初始化
+function KeySystem:Init(onSuccess)
+    -- 检查保存的密钥
+    local savedKey = self:LoadKey()
+    if savedKey and self:VerifyKey(savedKey) then
+        onSuccess()
+        return
+    end
+    
+    -- 创建 UI
+    local ui = self:CreateUI()
+    
+    -- 获取密钥按钮
+    ui.GetKeyButton.MouseButton1Click:Connect(function()
+        setclipboard(CONFIG.KeyLink) -- 复制链接到剪贴板
+        self:ShowStatus(ui, "✓ 链接已复制到剪贴板", true)
+    end)
+    
+    -- 验证按钮
+    ui.VerifyButton.MouseButton1Click:Connect(function()
+        local inputKey = ui.KeyInput.Text
+        
+        if inputKey == "" then
+            self:ShowStatus(ui, "✗ 请输入密钥", false)
+            return
+        end
+        
+        ui.VerifyButton.Text = "验证中..."
+        ui.VerifyButton.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
+        wait(0.5)
+        
+        if self:VerifyKey(inputKey) then
+            self:ShowStatus(ui, "✓ 验证成功！", true)
+            self:SaveKey(inputKey)
+            wait(1)
+            
+            -- 关闭动画
+            TweenService:Create(
+                ui.MainFrame,
+                TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+                {Size = UDim2.new(0, 0, 0, 0)}
+            ):Play()
+            
+            wait(0.3)
+            ui.ScreenGui:Destroy()
+            onSuccess()
+        else
+            self:ShowStatus(ui, "✗ 密钥错误，请重试", false)
+            ui.VerifyButton.Text = "✓ 验证密钥"
+            ui.VerifyButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+        end
+    end)
+end
+
+return KeySystem
