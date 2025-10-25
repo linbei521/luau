@@ -1,87 +1,154 @@
 --!nocheck
--- iOS 风格 UI Library（基于上版修复增强后进行视觉重塑）
+-- Android 16 (Material You) Styled UI Library
 -- 说明：
--- 1) _CONFIGS.UI_NAME 可自定义 UI 标题（默认 "UniversalUI"）
--- 2) 暴露 getgenv().library，API：CreateTab、Notify、SelectNotify、UpdateToggle 等
--- 3) 主要视觉：iOS 配色/圆角/描边/开关动画/滑条把手/按钮按压高亮
+-- 1) 与之前我给你的“修复版”库保持相同API；只是换成 Android 16 风格
+-- 2) 支持动态主色：getgenv()._CONFIGS.SEED_COLOR（可传 Color3、{r,g,b}、"#RRGGBB" 或 0xRRGGBB）
+-- 3) 自愈机制：UI/通知容器丢失时会自动重建；此自检会执行3次（异步）
 
+--============================ Services ============================
 local Services = setmetatable({}, { __index = function(_, k) return game:GetService(k) end })
 
+--========================== ENV & CONFIGS =========================
 local ENV = (getgenv and getgenv()) or _G
 local _CONFIGS = ENV._CONFIGS or {}
 if type(_CONFIGS) ~= "table" then _CONFIGS = {} end
 if type(_CONFIGS.UI_NAME) ~= "string" or _CONFIGS.UI_NAME == "" then _CONFIGS.UI_NAME = "UniversalUI" end
 ENV._CONFIGS = _CONFIGS
 
+--========================== Utils & Tween =========================
 local TweenService = Services.TweenService
 local Players = Services.Players
 local UserInputService = Services.UserInputService
+local RunService = Services.RunService
 
 local dm, dn, dp = UDim.new, UDim2.new, Color3.fromRGB
 local New = Instance.new
 local noop = function() end
 
--- iOS 风格主题
+local function tween(obj, props, t, style, dir)
+	return TweenService:Create(obj, TweenInfo.new(t or 0.25, Enum.EasingStyle[style or "Sine"], Enum.EasingDirection[dir or "Out"]), props)
+end
+
+local function resolveGuiParent()
+	local ok = pcall(function() return Services.CoreGui.Name end)
+	if ok then return Services.CoreGui end
+	local plr = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+	return plr:WaitForChild("PlayerGui")
+end
+
+--====================== Color Helpers (Material) ==================
+local function clamp01(x) return (x < 0 and 0) or (x > 1 and 1) or x end
+
+local function toColor3Any(c)
+	if typeof(c) == "Color3" then return c end
+	if type(c) == "table" then
+		local r = c[1] or c.r or c.R
+		local g = c[2] or c.g or c.G
+		local b = c[3] or c.b or c.B
+		if r and g and b then return dp(tonumber(r) or 0, tonumber(g) or 0, tonumber(b) or 0) end
+	end
+	if type(c) == "string" then
+		local hex = c:gsub("#","")
+		if #hex == 6 then
+			local r = tonumber(hex:sub(1,2),16) or 0
+			local g = tonumber(hex:sub(3,4),16) or 0
+			local b = tonumber(hex:sub(5,6),16) or 0
+			return dp(r,g,b)
+		end
+	end
+	if type(c) == "number" then
+		local r = bit32.rshift(c, 16) % 256
+		local g = bit32.rshift(c, 8) % 256
+		local b = c % 256
+		return dp(r,g,b)
+	end
+	return nil
+end
+
+local function adjustSV(color, ds, dv)
+	local h, s, v = color:ToHSV()
+	s = clamp01(s + (ds or 0))
+	v = clamp01(v + (dv or 0))
+	return Color3.fromHSV(h, s, v)
+end
+
+local SEED = toColor3Any(_CONFIGS.SEED_COLOR) or dp(103, 80, 164) -- Material 3 默认紫
+local PRIMARY = SEED
+local PRIMARY_PRESSED = adjustSV(PRIMARY, 0.0, -0.10)
+local PRIMARY_CONTAINER = adjustSV(PRIMARY, -0.25, 0.20)
+
+-- 中性表面与描边（Material You）
+local SURFACE = dp(250, 248, 252)          -- #FAF8FC 近白暖灰
+local SURFACE_CONTAINER = dp(255, 255, 255)
+local SURFACE_VARIANT = dp(231, 224, 236)  -- #E7E0EC
+local OUTLINE = dp(121, 116, 126)          -- #79747E
+
+local ON_SURFACE = dp(28, 27, 31)          -- #1C1B1F
+local ON_SURFACE_VARIANT = dp(73, 69, 79)  -- #49454F
+local ON_PRIMARY = dp(255, 255, 255)
+
+--============================== THEME =============================
 local THEME = {}
 
 THEME.SURFACE = {
-	WINDOW   = dp(242, 242, 247), -- #F2F2F7 分组背景
-	TITLEBAR = dp(255, 255, 255), -- #FFFFFF
-	SIDEBAR  = dp(242, 242, 247), -- 分组背景
-	PANEL    = dp(242, 242, 247), -- 分组背景
-	CARD     = dp(255, 255, 255), -- 白卡片
-	CARD_ALT = dp(255, 255, 255),
+	WINDOW   = SURFACE,
+	TITLEBAR = SURFACE_CONTAINER,
+	SIDEBAR  = SURFACE,
+	PANEL    = SURFACE,
+	CARD     = SURFACE_CONTAINER,
+	CARD_ALT = SURFACE_CONTAINER,
 }
 
 THEME.TEXTS = {
-	PRIMARY     = dp(28, 28, 30),   -- #1C1C1E
-	SECONDARY   = dp(142, 142, 147),-- #8E8E93
-	PLACEHOLDER = dp(161, 161, 167),-- #A1A1A7
+	PRIMARY     = ON_SURFACE,
+	SECONDARY   = ON_SURFACE_VARIANT,
+	PLACEHOLDER = dp(145, 140, 150),
 	INVERT      = dp(255, 255, 255)
 }
 
 THEME.BORDERS = {
-	SOFT   = dp(229, 229, 234), -- #E5E5EA
-	MEDIUM = dp(216, 216, 220), -- #D8D8DC
-	HARD   = dp(200, 200, 205),
+	SOFT   = OUTLINE,
+	MEDIUM = OUTLINE,
+	HARD   = dp(98, 93, 104),
 }
 
 THEME.CONTROL = {
-	INPUT_BG        = dp(242, 242, 247), -- 分组灰
-	INPUT_BG_FOCUS  = dp(255, 255, 255), -- 聚焦白
-	DROPDOWN_BG      = dp(255, 255, 255),
-	DROPDOWN_ITEM_BG = dp(255, 255, 255),
+	INPUT_BG        = SURFACE_CONTAINER,
+	INPUT_BG_FOCUS  = SURFACE_CONTAINER,
+	DROPDOWN_BG      = SURFACE_CONTAINER,
+	DROPDOWN_ITEM_BG = SURFACE_CONTAINER,
 
-	SLIDER_BAR_BG = dp(209, 209, 214), -- #D1D1D6
-	SLIDER_FILL   = dp(0, 122, 255),   -- #007AFF
+	SLIDER_BAR_BG = dp(209, 209, 214),
+	SLIDER_FILL   = PRIMARY,
 
-	TOGGLE_OFF_START = dp(233, 233, 235), -- 轨道灰
-	TOGGLE_OFF_END   = dp(229, 229, 234),
-	TOGGLE_ON_START  = dp(52, 199, 89),   -- #34C759
-	TOGGLE_ON_END    = dp(48, 209, 88),
+	-- Material Switch 规格
+	TOGGLE_TRACK_OFF = dp(208, 194, 217),
+	TOGGLE_TRACK_ON  = PRIMARY,
+	TOGGLE_KNOB_OFF  = SURFACE_CONTAINER,
+	TOGGLE_KNOB_ON   = dp(255, 255, 255),
 
-	ICON_PRIMARY = dp(28, 28, 30),
-	ICON_MUTED   = dp(142, 142, 147),
+	ICON_PRIMARY = ON_SURFACE,
+	ICON_MUTED   = ON_SURFACE_VARIANT,
 }
 
 THEME.STATE = {
-	ACCENT  = dp(0, 122, 255),  -- #007AFF
-	SUCCESS = dp(52, 199, 89),  -- #34C759
-	DANGER  = dp(255, 59, 48),  -- #FF3B30
-	WARNING = dp(255, 204, 0),  -- #FFCC00
+	ACCENT  = PRIMARY,
+	SUCCESS = dp(52, 199, 89),
+	DANGER  = dp(255, 59, 48),
+	WARNING = dp(255, 204, 0),
 }
 
 THEME.GLOW = {
-	START = dp(214, 214, 219),
-	MID   = dp(209, 209, 214),
-	END   = dp(214, 214, 219),
+	START = adjustSV(PRIMARY, 0.0, 0.15),
+	MID   = PRIMARY,
+	END   = adjustSV(PRIMARY, 0.0, 0.15),
 }
 
-THEME.SCROLLBAR = { TRACK = dp(242, 242, 247), THUMB = dp(209, 209, 214) }
+THEME.SCROLLBAR = { TRACK = SURFACE, THUMB = dp(206, 212, 222) }
 
-THEME.ALPHA = { STROKE_CONTAINER = 0.8, STROKE_CARD = 0.85, STROKE_INPUT = 0.9 }
+THEME.ALPHA = { STROKE_CONTAINER = 0.75, STROKE_CARD = 0.80, STROKE_INPUT = 0.80 }
 
--- 兼容键
+-- 兼容键（维持旧API）
 THEME.WHITE   = THEME.SURFACE.CARD
 THEME.SHEET   = THEME.SURFACE.TITLEBAR
 THEME.INPUT   = THEME.CONTROL.INPUT_BG
@@ -97,16 +164,16 @@ THEME.GL2     = THEME.GLOW.MID
 THEME.MAIN    = THEME.SURFACE.WINDOW
 THEME.SECTION = THEME.SURFACE.CARD
 
--- 圆角更圆润
+-- 更符合 Material 的圆角
 local R = {
-	big = dm(0,14),
-	mid = dm(0,12),
-	small = dm(0,10),
-	tiny = dm(0,6),
-	micro = dm(0,4),
+	big = dm(0, 12),
+	mid = dm(0, 10),
+	small = dm(0, 8),
+	tiny = dm(0, 6),
+	micro = dm(0, 4),
 }
 
--- 全局库
+--============================ Library Core ========================
 local library = ENV.library or {}
 ENV.library = library
 
@@ -127,12 +194,36 @@ function library:UpdateToggle(key, state)
 	flag:SetState(desired)
 end
 
--- Tween Helper
-local function tween(obj, props, t, style, dir)
-	return TweenService:Create(obj, TweenInfo.new(t or 0.25, Enum.EasingStyle[style or "Sine"], Enum.EasingDirection[dir or "Out"]), props)
+--=========================== Ripple Effect ========================
+local function attachRipple(btn: GuiObject)
+	btn.ClipsDescendants = true
+	btn.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		local rel = input.Position - btn.AbsolutePosition
+		local ripple = New("Frame")
+		ripple.Name = "Ripple"
+		ripple.AnchorPoint = Vector2.new(0.5, 0.5)
+		ripple.Position = UDim2.fromOffset(rel.X, rel.Y)
+		ripple.Size = UDim2.fromOffset(0, 0)
+		ripple.BackgroundColor3 = THEME.STATE.ACCENT
+		ripple.BackgroundTransparency = 0.7
+		ripple.BorderSizePixel = 0
+		ripple.ZIndex = (btn.ZIndex or 1) + 1
+		local corner = New("UICorner")
+		corner.CornerRadius = dm(1, 0) -- 圆形
+		corner.Parent = ripple
+		ripple.Parent = btn
+
+		local maxDim = math.max(btn.AbsoluteSize.X, btn.AbsoluteSize.Y) * 1.6
+		local t1 = tween(ripple, { Size = UDim2.fromOffset(maxDim, maxDim), BackgroundTransparency = 1 }, 0.45, "Quad", "Out")
+		t1:Play()
+		task.delay(0.5, function()
+			if ripple then ripple:Destroy() end
+		end)
+	end)
 end
 
--- Draggable
+--============================ Draggable ===========================
 local function makeDraggable(dragHandle: GuiObject, target: GuiObject)
 	local dragging, dragStart, startPos = false, nil, nil
 	dragHandle.InputBegan:Connect(function(input)
@@ -153,52 +244,11 @@ local function makeDraggable(dragHandle: GuiObject, target: GuiObject)
 	end)
 end
 
--- 选中标签样式切换
-local function switchTab(newBundle)
-	local current = library.currentTab
-	if current == newBundle then return end
-	library.currentTab = newBundle
-
-	-- 老的
-	if current then
-		local btn = current[2]
-		if btn then
-			local stroke = btn:FindFirstChild("BtnStroke")
-			if stroke then stroke.Thickness = 1; stroke.Color = THEME.BORDER end
-			btn.TextColor3 = THEME.TEXT
-			local glow = btn:FindFirstChild("Glow")
-			if glow then tween(glow, { Transparency = 1 }, 0.2):Play() end
-		end
-		if current[1] then current[1].Visible = false end
-	end
-
-	-- 新的
-	if newBundle then
-		local btn = newBundle[2]
-		if btn then
-			local stroke = btn:FindFirstChild("BtnStroke")
-			if stroke then stroke.Thickness = 2; stroke.Color = THEME.ACCENT end
-			btn.TextColor3 = THEME.ACCENT
-			local glow = btn:FindFirstChild("Glow")
-			if glow then tween(glow, { Transparency = 0 }, 0.2):Play() end
-		end
-		if newBundle[1] then newBundle[1].Visible = true end
-	end
-end
-
--- 父级
-local function resolveGuiParent()
-	local ok = pcall(function() return Services.CoreGui.Name end)
-	if ok then return Services.CoreGui end
-	local plr = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
-	return plr:WaitForChild("PlayerGui")
-end
-
+--===================== Build Root UI Containers ===================
 local parentGui = resolveGuiParent()
 local existed = parentGui:FindFirstChild(_CONFIGS.UI_NAME)
 if existed then existed:Destroy() end
 
--- 根
 local Screen = New("ScreenGui")
 Screen.Name = _CONFIGS.UI_NAME
 Screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -215,12 +265,9 @@ Main.BorderSizePixel = 0
 Main.Position = dn(0.5, 0, 0.5, 0)
 Main.Size = dn(0, 448, 0, 280)
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
+local MainCorner = New("UICorner"); MainCorner.CornerRadius = R.big; MainCorner.Parent = Main
 
-local MainCorner = New("UICorner")
-MainCorner.CornerRadius = R.big
-MainCorner.Parent = Main
-
--- 顶部 TitleBar（iOS 白导航）
+-- 标题栏
 local Title = New("TextLabel")
 Title.Parent = Main
 Title.BackgroundColor3 = THEME.SURFACE.TITLEBAR
@@ -232,52 +279,36 @@ Title.Text = "  " .. _CONFIGS.UI_NAME
 Title.TextColor3 = THEME.TEXT
 Title.TextSize = 14
 Title.TextXAlignment = Enum.TextXAlignment.Left
+local TitleCorner = New("UICorner"); TitleCorner.CornerRadius = R.big; TitleCorner.Parent = Title
+local TitleStroke = New("UIStroke"); TitleStroke.Color = THEME.BORDER; TitleStroke.Transparency = THEME.ALPHA.STROKE_CONTAINER; TitleStroke.Thickness = 1; TitleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; TitleStroke.Parent = Title
 
-local TitleCorner = New("UICorner")
-TitleCorner.CornerRadius = R.big
-TitleCorner.Parent = Title
-
-local TitleStroke = New("UIStroke")
-TitleStroke.Color = THEME.BORDER
-TitleStroke.Transparency = THEME.ALPHA.STROKE_CONTAINER
-TitleStroke.Thickness = 1
-TitleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-TitleStroke.Parent = Title
-
--- 打开/隐藏（胶囊按钮）
+-- Open/Hide 按钮（Material Tonal）
 local OpenBtn = New("TextButton")
 OpenBtn.Name = "Open"
 OpenBtn.Parent = Screen
-OpenBtn.BackgroundColor3 = THEME.SURFACE.TITLEBAR
+OpenBtn.BackgroundColor3 = PRIMARY_CONTAINER
 OpenBtn.Position = dn(0.85, 0, 0.05, 0)
 OpenBtn.Size = dn(0, 64, 0, 26)
 OpenBtn.AutoButtonColor = false
 OpenBtn.Font = Enum.Font.GothamSemibold
 OpenBtn.Text = "隐藏"
-OpenBtn.TextColor3 = THEME.ACCENT
+OpenBtn.TextColor3 = THEME.TEXTS.PRIMARY
 OpenBtn.TextSize = 14
-
-local OpenCorner = New("UICorner")
-OpenCorner.CornerRadius = R.big
-OpenCorner.Parent = OpenBtn
-
-local OpenStroke = New("UIStroke")
-OpenStroke.Color = THEME.BORDER
-OpenStroke.Transparency = 0.2
-OpenStroke.Thickness = 1
-OpenStroke.Parent = OpenBtn
-
+local OpenCorner = New("UICorner"); OpenCorner.CornerRadius = R.big; OpenCorner.Parent = OpenBtn
+local OpenStroke = New("UIStroke"); OpenStroke.Color = THEME.BORDER; OpenStroke.Transparency = 0.3; OpenStroke.Thickness = 1; OpenStroke.Parent = OpenBtn
 makeDraggable(OpenBtn, OpenBtn)
 makeDraggable(Title, Main)
+attachRipple(OpenBtn)
 
 local TOGGLE = true
 OpenBtn.MouseButton1Click:Connect(function()
 	TOGGLE = not TOGGLE
 	Main.Visible = TOGGLE
 	OpenBtn.Text = (TOGGLE and "隐藏" or "打开")
+	tween(OpenBtn, { BackgroundColor3 = TOGGLE and PRIMARY_CONTAINER or adjustSV(PRIMARY_CONTAINER, 0, -0.05) }, 0.18):Play()
 end)
 
--- 侧栏（iOS 分组灰）
+-- Sidebar
 local Sidebar = New("Frame")
 Sidebar.Name = "Sidebar"
 Sidebar.Parent = Main
@@ -285,10 +316,7 @@ Sidebar.BackgroundColor3 = THEME.SURFACE.SIDEBAR
 Sidebar.BorderSizePixel = 0
 Sidebar.Position = dn(0, 6, 0, 36)
 Sidebar.Size = dn(0, 106, 0, 238)
-
-local SidebarCorner = New("UICorner")
-SidebarCorner.CornerRadius = R.big
-SidebarCorner.Parent = Sidebar
+local SidebarCorner = New("UICorner"); SidebarCorner.CornerRadius = R.big; SidebarCorner.Parent = Sidebar
 
 local TabButtons = New("ScrollingFrame")
 TabButtons.Name = "TabButtons"
@@ -321,20 +349,42 @@ TabHolder.BackgroundColor3 = THEME.SURFACE.PANEL
 TabHolder.BorderSizePixel = 0
 TabHolder.Position = dn(0, 118, 0, 36)
 TabHolder.Size = dn(0, 324, 0, 238)
+local TabHolderCorner = New("UICorner"); TabHolderCorner.CornerRadius = R.big; TabHolderCorner.Parent = TabHolder
 
-local TabHolderCorner = New("UICorner")
-TabHolderCorner.CornerRadius = R.big
-TabHolderCorner.Parent = TabHolder
+-- 切换标签指示器
+local function switchTab(newBundle)
+	local current = library.currentTab
+	if current == newBundle then return end
+	library.currentTab = newBundle
 
--- 按钮按压高亮
-local function attachPressEffect(btn: TextButton, baseColor: Color3, downColor: Color3)
-	btn.AutoButtonColor = false
-	btn.MouseButton1Down:Connect(function() tween(btn, { BackgroundColor3 = downColor }, 0.08):Play() end)
-	btn.MouseButton1Up:Connect(function() tween(btn, { BackgroundColor3 = baseColor }, 0.12):Play() end)
-	btn.MouseLeave:Connect(function() tween(btn, { BackgroundColor3 = baseColor }, 0.12):Play() end)
+	if current then
+		local btn = current[2]
+		if btn then
+			local stroke = btn:FindFirstChild("BtnStroke")
+			if stroke then stroke.Thickness = 1; stroke.Color = THEME.BORDER end
+			btn.TextColor3 = THEME.TEXT
+			local glow = btn:FindFirstChild("Glow")
+			if glow then tween(glow, { Transparency = 1 }, 0.2):Play() end
+			tween(btn, { BackgroundColor3 = THEME.WHITE }, 0.15):Play()
+		end
+		if current[1] then current[1].Visible = false end
+	end
+
+	if newBundle then
+		local btn = newBundle[2]
+		if btn then
+			local stroke = btn:FindFirstChild("BtnStroke")
+			if stroke then stroke.Thickness = 2; stroke.Color = THEME.ACCENT end
+			btn.TextColor3 = THEME.ACCENT
+			local glow = btn:FindFirstChild("Glow")
+			if glow then tween(glow, { Transparency = 0 }, 0.2):Play() end
+			tween(btn, { BackgroundColor3 = PRIMARY_CONTAINER }, 0.15):Play()
+		end
+		if newBundle[1] then newBundle[1].Visible = true end
+	end
 end
 
--- 通知
+--=========================== Notifications ========================
 local notificationHolder
 local notifAmount, removedPos = 0, nil
 
@@ -361,22 +411,20 @@ local function createBaseNotifications()
 
 		local corner = New("UICorner"); corner.CornerRadius = R.big; corner.Parent = Card
 		local stroke = New("UIStroke"); stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		stroke.Transparency = 0.2; stroke.Thickness = 1; stroke.Color = THEME.BORDER; stroke.Parent = Card
+		stroke.Transparency = 0.25; stroke.Thickness = 1; stroke.Color = THEME.BORDER; stroke.Parent = Card
 
 		return Card
 	end
 
-	-- ToggleNotif
 	local ToggleNotif = makeCard("ToggleNotif")
-
-	local Title = New("TextLabel")
-	Title.Name = "Title"
-	Title.Size = UDim2.new(0, 216, 0, 20)
-	Title.BackgroundTransparency = 1
-	Title.TextSize = 14
-	Title.TextColor3 = THEME.TEXT
-	Title.Font = Enum.Font.Gotham
-	Title.Parent = ToggleNotif
+	local Title1 = New("TextLabel")
+	Title1.Name = "Title"
+	Title1.Size = UDim2.new(0, 216, 0, 20)
+	Title1.BackgroundTransparency = 1
+	Title1.TextSize = 14
+	Title1.TextColor3 = THEME.TEXT
+	Title1.Font = Enum.Font.Gotham
+	Title1.Parent = ToggleNotif
 
 	local Paragraph = New("TextLabel")
 	Paragraph.Name = "Paragraph"
@@ -390,16 +438,12 @@ local function createBaseNotifications()
 	Paragraph.Font = Enum.Font.Gotham
 	Paragraph.TextXAlignment = Enum.TextXAlignment.Left
 	Paragraph.Parent = ToggleNotif
-
-	local PPad = New("UIPadding")
-	PPad.PaddingLeft = UDim.new(0, 10)
-	PPad.PaddingRight = UDim.new(0, 5)
-	PPad.Parent = Paragraph
+	local PPad = New("UIPadding"); PPad.PaddingLeft = UDim.new(0, 10); PPad.PaddingRight = UDim.new(0, 5); PPad.Parent = Paragraph
 
 	local TrueBtn = New("TextButton")
 	TrueBtn.Name = "True"
 	TrueBtn.Size = UDim2.new(0, 74, 0, 26)
-	TrueBtn.BackgroundColor3 = THEME.SURFACE.TITLEBAR
+	TrueBtn.BackgroundColor3 = PRIMARY_CONTAINER
 	TrueBtn.Position = UDim2.new(0.75, 0, 0, 2)
 	TrueBtn.TextSize = 14
 	TrueBtn.TextColor3 = THEME.ACCENT
@@ -408,12 +452,12 @@ local function createBaseNotifications()
 	TrueBtn.Parent = ToggleNotif
 	local TrueCorner = New("UICorner"); TrueCorner.CornerRadius = R.small; TrueCorner.Parent = TrueBtn
 	local TrueStroke = New("UIStroke"); TrueStroke.Color = THEME.BORDER; TrueStroke.Transparency = 0.2; TrueStroke.Thickness = 1; TrueStroke.Parent = TrueBtn
-	attachPressEffect(TrueBtn, THEME.SURFACE.TITLEBAR, dp(245,245,245))
+	attachRipple(TrueBtn)
 
 	local FalseBtn = New("TextButton")
 	FalseBtn.Name = "False"
 	FalseBtn.Size = UDim2.new(0, 74, 0, 26)
-	FalseBtn.BackgroundColor3 = THEME.SURFACE.TITLEBAR
+	FalseBtn.BackgroundColor3 = PRIMARY_CONTAINER
 	FalseBtn.Position = UDim2.new(0.75, 0, 0.51, -2)
 	FalseBtn.TextSize = 14
 	FalseBtn.TextColor3 = THEME.BAD
@@ -422,11 +466,9 @@ local function createBaseNotifications()
 	FalseBtn.Parent = ToggleNotif
 	local FalseCorner = New("UICorner"); FalseCorner.CornerRadius = R.small; FalseCorner.Parent = FalseBtn
 	local FalseStroke = New("UIStroke"); FalseStroke.Color = THEME.BORDER; FalseStroke.Transparency = 0.2; FalseStroke.Thickness = 1; FalseStroke.Parent = FalseBtn
-	attachPressEffect(FalseBtn, THEME.SURFACE.TITLEBAR, dp(245,245,245))
+	attachRipple(FalseBtn)
 
-	-- DefaultNotif
 	local DefaultNotif = makeCard("DefaultNotif")
-
 	local DTitle = New("TextLabel")
 	DTitle.Name = "Title"
 	DTitle.Size = UDim2.new(0, 291, 0, 20)
@@ -449,11 +491,7 @@ local function createBaseNotifications()
 	DPara.Font = Enum.Font.Gotham
 	DPara.TextXAlignment = Enum.TextXAlignment.Left
 	DPara.Parent = DefaultNotif
-
-	local DPad = New("UIPadding")
-	DPad.PaddingLeft = UDim.new(0, 10)
-	DPad.PaddingRight = UDim.new(0, 5)
-	DPad.Parent = DPara
+	local DPad = New("UIPadding"); DPad.PaddingLeft = UDim.new(0, 10); DPad.PaddingRight = UDim.new(0, 5); DPad.Parent = DPara
 
 	ScreenGui.Parent = pg
 	return ScreenGui
@@ -488,7 +526,7 @@ function library:SelectNotify(args)
 	notif.Paragraph.Text = args.Text
 	notif.Title.Text = args.Title
 
-	tween(notif, { Position = UDim2.new(1, -5, 1, -5) }, args.TweenInSpeed, "Quint", "Out):"):Play()
+	tween(notif, { Position = UDim2.new(1, -5, 1, -5) }, args.TweenInSpeed, "Quint", "Out"):Play()
 
 	task.spawn(function()
 		task.wait(args.Duration + args.TweenInSpeed)
@@ -597,7 +635,7 @@ function library:Notify(args)
 	end)
 end
 
--- 创建 Tab 和控件（iOS 风格）
+--=========================== CreateTab API ========================
 function library:CreateTab(tabName: string)
 	local TabButton = New("TextButton")
 	local TabButtonCorner = New("UICorner")
@@ -619,25 +657,18 @@ function library:CreateTab(tabName: string)
 	TabButton.Text = tabName
 	TabButton.TextColor3 = THEME.TEXT
 	TabButton.TextSize = 14
-
-	TabButtonCorner.CornerRadius = R.big
-	TabButtonCorner.Parent = TabButton
-
-	BtnStroke.Name = "BtnStroke"
-	BtnStroke.Color = THEME.BORDER
-	BtnStroke.Thickness = 1
-	BtnStroke.Transparency = 0.2
-	BtnStroke.Parent = TabButton
+	TabButtonCorner.CornerRadius = R.big; TabButtonCorner.Parent = TabButton
+	BtnStroke.Name = "BtnStroke"; BtnStroke.Color = THEME.BORDER; BtnStroke.Thickness = 1; BtnStroke.Transparency = 0.25; BtnStroke.Parent = TabButton
+	attachRipple(TabButton)
 
 	Glow.Name = "Glow"
 	Glow.Parent = TabButton
 	Glow.BackgroundColor3 = THEME.WHITE
 	Glow.BorderSizePixel = 0
-	Glow.Position = dn(0, 0, 0.9, 0)
+	Glow.Position = dn(0, 0, 0.90, 0)
 	Glow.Size = dn(1, 0, 0, 2)
 	Glow.Transparency = 1
-	GlowCorner.CornerRadius = R.micro
-	GlowCorner.Parent = Glow
+	GlowCorner.CornerRadius = R.micro; GlowCorner.Parent = Glow
 	GlowGradient.Color = ColorSequence.new{
 		ColorSequenceKeypoint.new(0.0, THEME.GL1),
 		ColorSequenceKeypoint.new(0.5, THEME.GL2),
@@ -649,7 +680,6 @@ function library:CreateTab(tabName: string)
 	Tab.Parent = TabHolder
 	Tab.Active = true
 	Tab.BackgroundTransparency = 1
-	Tab.BorderSizePixel = 0
 	Tab.Size = dn(0, 324, 0, 238)
 	Tab.ScrollBarThickness = 0
 	Tab.Visible = false
@@ -660,12 +690,12 @@ function library:CreateTab(tabName: string)
 		BtnStroke.Thickness = 2
 		BtnStroke.Color = THEME.ACCENT
 		TabButton.TextColor3 = THEME.ACCENT
+		TabButton.BackgroundColor3 = PRIMARY_CONTAINER
 		Tab.Visible = true
 	end
 
 	TabPadding.Parent = Tab
 	TabPadding.PaddingTop = dm(0, 6)
-
 	TabLayout.Parent = Tab
 	TabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	TabLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -678,7 +708,7 @@ function library:CreateTab(tabName: string)
 		switchTab({ Tab, TabButton })
 	end)
 
-	-- 单元卡片创建器（白卡片 + 描边）
+	-- 通用“单元行”卡片（Material卡片 + 描边 + 涟漪）
 	local function makeCell(height)
 		local Btn = New("TextButton")
 		local Corner = New("UICorner")
@@ -686,7 +716,7 @@ function library:CreateTab(tabName: string)
 		Btn.Parent = Tab
 		Btn.BackgroundColor3 = THEME.WHITE
 		Btn.BorderSizePixel = 0
-		Btn.Size = dn(0, 312, 0, height or 28)
+		Btn.Size = dn(0, 312, 0, height or 32)
 		Btn.AutoButtonColor = false
 		Btn.Font = Enum.Font.GothamSemibold
 		Btn.TextColor3 = THEME.TEXT
@@ -697,11 +727,11 @@ function library:CreateTab(tabName: string)
 		Corner.Parent = Btn
 
 		Stroke.Color = THEME.BORDER
-		Stroke.Transparency = 0.2
+		Stroke.Transparency = 0.25
 		Stroke.Thickness = 1
 		Stroke.Parent = Btn
 
-		attachPressEffect(Btn, THEME.WHITE, dp(245,245,245))
+		attachRipple(Btn)
 		return Btn
 	end
 
@@ -723,60 +753,43 @@ function library:CreateTab(tabName: string)
 		Btn.MouseButton1Click:Connect(callback)
 	end
 
-	-- iOS Toggle：胶囊 + 圆形滑块
+	-- Material Switch
 	function API:NewToggle(label, key, default, callback)
 		callback = callback or noop
 		default = default or false
 		key = key or label
 
-		local Row = makeCell(32)
+		local Row = makeCell(36)
 		Row.Name = "ToggleModule"
 		Row.Text = "  " .. tostring(label)
 
 		local Track = New("Frame")
 		Track.Parent = Row
-		Track.Size = dn(0, 44, 0, 24)
-		Track.Position = dn(1, -54, 0.5, -12)
-		Track.BackgroundColor3 = THEME.CONTROL.TOGGLE_OFF_START
+		Track.Size = dn(0, 46, 0, 26)
+		Track.Position = dn(1, -58, 0.5, -13)
+		Track.BackgroundColor3 = THEME.CONTROL.TOGGLE_TRACK_OFF
 		Track.BorderSizePixel = 0
-
-		local TrackCorner = New("UICorner")
-		TrackCorner.CornerRadius = dm(0, 12)
-		TrackCorner.Parent = Track
-
-		local TrackStroke = New("UIStroke")
-		TrackStroke.Color = THEME.BORDERS.MEDIUM
-		TrackStroke.Transparency = 0.2
-		TrackStroke.Thickness = 1
-		TrackStroke.Parent = Track
+		local TrackCorner = New("UICorner"); TrackCorner.CornerRadius = dm(0, 13); TrackCorner.Parent = Track
+		local TrackStroke = New("UIStroke"); TrackStroke.Color = THEME.BORDER; TrackStroke.Transparency = 0.3; TrackStroke.Thickness = 1; TrackStroke.Parent = Track
 
 		local Knob = New("Frame")
 		Knob.Parent = Track
-		Knob.AnchorPoint = Vector2.new(0, 0)
-		Knob.Position = UDim2.new(0, 2, 0, 2)
+		Knob.Position = UDim2.new(0, 3, 0.5, -10)
 		Knob.Size = UDim2.new(0, 20, 0, 20)
-		Knob.BackgroundColor3 = THEME.WHITE
+		Knob.BackgroundColor3 = THEME.CONTROL.TOGGLE_KNOB_OFF
 		Knob.BorderSizePixel = 0
-
-		local KnobCorner = New("UICorner")
-		KnobCorner.CornerRadius = dm(1, 0)
-		KnobCorner.Parent = Knob
-
-		local KnobStroke = New("UIStroke")
-		KnobStroke.Color = THEME.BORDER
-		KnobStroke.Transparency = 0.2
-		KnobStroke.Thickness = 1
-		KnobStroke.Parent = Knob
+		local KnobCorner = New("UICorner"); KnobCorner.CornerRadius = dm(1, 0); KnobCorner.Parent = Knob
+		local KnobStroke = New("UIStroke"); KnobStroke.Color = THEME.BORDER; KnobStroke.Transparency = 0.2; KnobStroke.Thickness = 1; KnobStroke.Parent = Knob
 
 		local function render(state)
 			if state then
-				tween(Track, { BackgroundColor3 = THEME.GOOD }, 0.18):Play()
-				tween(TrackStroke, { Color = THEME.GOOD, Transparency = 0.1 }, 0.18):Play()
-				tween(Knob, { Position = UDim2.new(0, 44 - 2 - 20, 0, 2) }, 0.18):Play()
+				tween(Track, { BackgroundColor3 = THEME.CONTROL.TOGGLE_TRACK_ON }, 0.18):Play()
+				tween(Knob, { Position = UDim2.new(1, -3 - 20, 0.5, -10), BackgroundColor3 = THEME.CONTROL.TOGGLE_KNOB_ON }, 0.18):Play()
+				tween(TrackStroke, { Color = adjustSV(THEME.CONTROL.TOGGLE_TRACK_ON, 0, -0.1), Transparency = 0.15 }, 0.18):Play()
 			else
-				tween(Track, { BackgroundColor3 = THEME.CONTROL.TOGGLE_OFF_START }, 0.18):Play()
-				tween(TrackStroke, { Color = THEME.BORDERS.MEDIUM, Transparency = 0.2 }, 0.18):Play()
-				tween(Knob, { Position = UDim2.new(0, 2, 0, 2) }, 0.18):Play()
+				tween(Track, { BackgroundColor3 = THEME.CONTROL.TOGGLE_TRACK_OFF }, 0.18):Play()
+				tween(Knob, { Position = UDim2.new(0, 3, 0.5, -10), BackgroundColor3 = THEME.CONTROL.TOGGLE_KNOB_OFF }, 0.18):Play()
+				tween(TrackStroke, { Color = THEME.BORDER, Transparency = 0.3 }, 0.18):Play()
 			end
 		end
 
@@ -830,16 +843,9 @@ function library:CreateTab(tabName: string)
 		Value.Text = display
 		Value.TextColor3 = THEME.TEXT
 		Value.TextSize = 12
-
-		local ValueCorner = New("UICorner")
-		ValueCorner.CornerRadius = R.small
-		ValueCorner.Parent = Value
-
-		local ValueStroke = New("UIStroke")
-		ValueStroke.Color = THEME.BORDER
-		ValueStroke.Transparency = 0.3
-		ValueStroke.Thickness = 1
-		ValueStroke.Parent = Value
+		local ValueCorner = New("UICorner"); ValueCorner.CornerRadius = R.small; ValueCorner.Parent = Value
+		local ValueStroke = New("UIStroke"); ValueStroke.Color = THEME.BORDER; ValueStroke.Transparency = 0.3; ValueStroke.Thickness = 1; ValueStroke.Parent = Value
+		attachRipple(Value)
 
 		UserInputService.InputBegan:Connect(function(input, gpe)
 			if gpe then return end
@@ -867,12 +873,12 @@ function library:CreateTab(tabName: string)
 		end)
 	end
 
-	-- iOS Slider：细轨 + 蓝色填充 + 圆把手
+	-- Material Slider
 	function API:NewSlider(label, key, defaultValue, minValue, maxValue, allowFloat, callback)
 		callback = callback or noop
 		defaultValue = (defaultValue ~= nil) and defaultValue or minValue
 
-		local Row = makeCell(40)
+		local Row = makeCell(44)
 		Row.Name = "SliderModule"
 		Row.Text = "  " .. tostring(label)
 
@@ -882,20 +888,14 @@ function library:CreateTab(tabName: string)
 		Bar.BorderSizePixel = 0
 		Bar.Position = dn(0, 110, 0.5, -2)
 		Bar.Size = dn(0, 120, 0, 4)
-
-		local BarCorner = New("UICorner")
-		BarCorner.CornerRadius = R.small
-		BarCorner.Parent = Bar
+		local BarCorner = New("UICorner"); BarCorner.CornerRadius = R.small; BarCorner.Parent = Bar
 
 		local Fill = New("Frame")
 		Fill.Parent = Bar
 		Fill.BackgroundColor3 = THEME.ACCENT
 		Fill.BorderSizePixel = 0
 		Fill.Size = dn(0, 0, 1, 0)
-
-		local FillCorner = New("UICorner")
-		FillCorner.CornerRadius = R.small
-		FillCorner.Parent = Fill
+		local FillCorner = New("UICorner"); FillCorner.CornerRadius = R.small; FillCorner.Parent = Fill
 
 		local Handle = New("Frame")
 		Handle.Parent = Fill
@@ -995,7 +995,6 @@ function library:CreateTab(tabName: string)
 			end
 		end)
 
-		-- 初始化
 		library.flags[key]:SetValue(defaultValue)
 	end
 
@@ -1033,7 +1032,7 @@ function library:CreateTab(tabName: string)
 		ToggleBtn.TextColor3 = THEME.TEXT
 		ToggleBtn.TextSize = 18
 
-		local Drop = New("TextButton")
+		local Drop = New("Frame")
 		local DropCorner = New("UICorner")
 		local DropStroke = New("UIStroke")
 		local DropLayout = New("UIListLayout")
@@ -1045,18 +1044,12 @@ function library:CreateTab(tabName: string)
 		Drop.BorderSizePixel = 0
 		Drop.ClipsDescendants = true
 		Drop.Size = dn(0, 312, 0, 0)
-		Drop.AutoButtonColor = false
-		Drop.Font = Enum.Font.GothamSemibold
-		Drop.Text = ""
-		Drop.TextColor3 = THEME.TEXT
-		Drop.TextSize = 14
-		Drop.TextXAlignment = Enum.TextXAlignment.Left
 		Drop.Visible = false
 
 		DropCorner.CornerRadius = R.big
 		DropCorner.Parent = Drop
 		DropStroke.Color = THEME.BORDER
-		DropStroke.Transparency = 0.2
+		DropStroke.Transparency = 0.25
 		DropStroke.Thickness = 1
 		DropStroke.Parent = Drop
 
@@ -1126,7 +1119,7 @@ function library:CreateTab(tabName: string)
 			Btn.TextSize = 14
 			BtnCorner.CornerRadius = R.big
 			BtnCorner.Parent = Btn
-			attachPressEffect(Btn, THEME.CONTROL.DROPDOWN_ITEM_BG, dp(245,245,245))
+			attachRipple(Btn)
 			Btn.MouseButton1Click:Connect(function()
 				Input.PlaceholderText = tostring(opt)
 				Input.Text = ""
@@ -1161,15 +1154,9 @@ function library:CreateTab(tabName: string)
 		Box.TextColor3 = THEME.TEXT
 		Box.TextSize = 12
 
-		local BoxCorner = New("UICorner")
-		BoxCorner.CornerRadius = R.small
-		BoxCorner.Parent = Box
-
-		local BoxStroke = New("UIStroke")
-		BoxStroke.Color = THEME.BORDER
-		BoxStroke.Transparency = 0.3
-		BoxStroke.Thickness = 1
-		BoxStroke.Parent = Box
+		local BoxCorner = New("UICorner"); BoxCorner.CornerRadius = R.small; BoxCorner.Parent = Box
+		local BoxStroke = New("UIStroke"); BoxStroke.Color = THEME.BORDER; BoxStroke.Transparency = 0.3; BoxStroke.Thickness = 1; BoxStroke.Parent = Box
+		attachRipple(Box)
 
 		Box.FocusLost:Connect(function(enter)
 			if not enter then return end
@@ -1181,7 +1168,7 @@ function library:CreateTab(tabName: string)
 	return API
 end
 
--- 支持 library.Name 动态更新标题
+--===================== Dynamic Title (library.Name) =================
 setmetatable(library, {
 	__newindex = function(self, i, v)
 		if i == 'Name' then
@@ -1192,3 +1179,31 @@ setmetatable(library, {
 		rawset(self, i, v)
 	end
 })
+
+--========================== Self-Heal (3x) =========================
+local function selfHeal()
+	-- 1) Screen 挂载
+	if not Screen.Parent then
+		Screen.Parent = resolveGuiParent()
+	end
+	-- 2) 通知容器
+	if not notificationHolder or not notificationHolder.Parent then
+		notificationHolder = createBaseNotifications()
+	end
+	-- 3) Tab 可见性校验
+	if not library.currentTab then
+		local firstBtn = TabButtons:FindFirstChildWhichIsA("TextButton")
+		local firstTab
+		for _, child in ipairs(TabHolder:GetChildren()) do
+			if child:IsA("ScrollingFrame") then firstTab = child break end
+		end
+		if firstBtn and firstTab then
+			library.currentTab = { firstTab, firstBtn }
+			firstTab.Visible = true
+		end
+	end
+end
+
+for i = 1, 3 do
+	task.delay(i * 0.35, selfHeal)
+end
