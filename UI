@@ -22,6 +22,7 @@ local TweenService = Services.TweenService
 local Players = Services.Players
 local UserInputService = Services.UserInputService
 local HapticService = Services.HapticService
+local RunService = Services.RunService
 
 local dm = UDim.new
 local dn = UDim2.new
@@ -145,7 +146,7 @@ function tween:Create(obj, props, duration, style, dir)
 	)
 end
 
--- 丝滑的标签页切换动效（Glow + 轻微弹入）
+-- 丝滑标签页切换（Glow + 轻弹入）
 function tween:SwitchTab(newTabBundle)
 	local current = library.currentTab
 	if current == newTabBundle then return end
@@ -155,24 +156,21 @@ function tween:SwitchTab(newTabBundle)
 	local oldBtn = current and current[2]
 	local newBtn = newTabBundle and newTabBundle[2]
 
-	-- Glow 边缘光过渡
 	if oldBtn and oldBtn:FindFirstChild("Glow") then
-		self:Create(oldBtn.Glow, { Transparency = 1 }, 0.2, "Sine", "Out"):Play()
+		self:Create(oldBtn.Glow, { Transparency = 1 }, 0.22, "Sine", "Out"):Play()
 	end
 	if newBtn and newBtn:FindFirstChild("Glow") then
-		self:Create(newBtn.Glow, { Transparency = 0 }, 0.2, "Sine", "Out"):Play()
+		self:Create(newBtn.Glow, { Transparency = 0 }, 0.22, "Sine", "Out"):Play()
 	end
 
-	-- 切换内容
 	if oldTab then oldTab.Visible = false end
 	if newTab then
 		newTab.Visible = true
-		-- 轻微弹入
 		local s = newTab:FindFirstChild("TabScale") or Instance.new("UIScale")
 		s.Name = "TabScale"
 		s.Scale = 0.98
 		s.Parent = newTab
-		self:Create(s, { Scale = 1 }, 0.18, "Sine", "Out"):Play()
+		self:Create(s, { Scale = 1 }, 0.2, "Sine", "Out"):Play()
 	end
 	library.currentTab = newTabBundle
 end
@@ -206,7 +204,7 @@ end)
 
 Screen.Parent = parentGui
 
--- 拖拽
+-- 拖拽（保持轻量、无插值）
 local function makeDraggable(dragHandle: GuiObject, target: GuiObject)
 	local dragging = false
 	local dragStart
@@ -216,11 +214,11 @@ local function makeDraggable(dragHandle: GuiObject, target: GuiObject)
 			dragging = true
 			dragStart = input.Position
 			startPos = target.Position
-			input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-				end
-			end)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+			dragging = false
 		end
 	end)
 	UserInputService.InputChanged:Connect(function(input)
@@ -234,8 +232,12 @@ local function makeDraggable(dragHandle: GuiObject, target: GuiObject)
 	end)
 end
 
--- iOS风格交互与视觉
+-- iOS 风格：震动（仅在 Activated 触发，避免误触）
+local lastPulse = 0
 local function hapticPulse(strength)
+	local now = os.clock()
+	if now - lastPulse < 0.06 then return end
+	lastPulse = now
 	pcall(function()
 		if HapticService and HapticService:IsMotorSupported(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small) then
 			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small, math.clamp(strength or 0.35, 0, 1))
@@ -246,6 +248,7 @@ local function hapticPulse(strength)
 	end)
 end
 
+-- 按钮按压反馈（按下缩放 + 抬起回弹，震动仅在 Activated）
 local function addPressFeedback(btn: GuiButton)
 	if not btn or not btn:IsA("GuiButton") then return end
 	if btn:FindFirstChild("iOS_UIScale") then return end
@@ -260,17 +263,16 @@ local function addPressFeedback(btn: GuiButton)
 
 	if canTint then
 		btn.MouseEnter:Connect(function()
-			tween:Create(btn, { BackgroundColor3 = originalColor:Lerp(Color3.new(1,1,1), 0.06) }, 0.12, "Sine", "Out"):Play()
+			tween:Create(btn, { BackgroundColor3 = originalColor:Lerp(Color3.new(1,1,1), 0.05) }, 0.12, "Sine", "Out"):Play()
 		end)
 		btn.MouseLeave:Connect(function()
-			tween:Create(btn, { BackgroundColor3 = originalColor }, 0.18, "Sine", "Out"):Play()
+			tween:Create(btn, { BackgroundColor3 = originalColor }, 0.16, "Sine", "Out"):Play()
 		end)
 	end
 
 	btn.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			tween:Create(scale, { Scale = 0.98 }, 0.08, "Quint", "Out"):Play()
-			hapticPulse(0.4)
+			tween:Create(scale, { Scale = 0.96 }, 0.08, "Quint", "Out"):Play()
 		end
 	end)
 	btn.InputEnded:Connect(function(input)
@@ -278,13 +280,17 @@ local function addPressFeedback(btn: GuiButton)
 			tween:Create(scale, { Scale = 1 }, 0.22, "Back", "Out"):Play()
 		end
 	end)
+	-- 只有真正点击成功才震动
+	btn.Activated:Connect(function()
+		hapticPulse(0.4)
+	end)
 end
 
+-- 玻璃拟态（近似：渐变+半透明+高光描边）
 local function glassify(frame: GuiObject, opts)
 	opts = opts or {}
 	frame.BackgroundColor3 = opts.TintColor or Color3.fromRGB(255,255,255)
 	frame.BackgroundTransparency = opts.Transparency or 0.12
-	-- 高光描边
 	if not frame:FindFirstChild("iOS_GlassStroke") then
 		local stroke = Instance.new("UIStroke")
 		stroke.Name = "iOS_GlassStroke"
@@ -294,7 +300,6 @@ local function glassify(frame: GuiObject, opts)
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.Parent = frame
 	end
-	-- 柔和渐变
 	if not frame:FindFirstChildOfClass("UIGradient") then
 		local grad = Instance.new("UIGradient")
 		grad.Rotation = 90
@@ -312,15 +317,26 @@ local function glassify(frame: GuiObject, opts)
 	end
 end
 
-local function popIn(frame: GuiObject)
-	if not frame then return end
-	local s = frame:FindFirstChild("iOS_WindowScale") or Instance.new("UIScale")
+-- 窗口弹入/弹出（更丝滑）
+local function showMain(Main, show)
+	local s = Main:FindFirstChild("iOS_WindowScale") or Instance.new("UIScale")
 	s.Name = "iOS_WindowScale"
-	s.Scale = 0.96
-	s.Parent = frame
-	tween:Create(s, { Scale = 1 }, 0.22, "Back", "Out"):Play()
+	s.Parent = Main
+	if show then
+		Main.Visible = true
+		s.Scale = 0.96
+		tween:Create(s, { Scale = 1 }, 0.22, "Back", "Out"):Play()
+	else
+		s.Scale = 1
+		local tw = tween:Create(s, { Scale = 0.96 }, 0.16, "Sine", "In")
+		tw:Play()
+		task.delay(0.16, function()
+			Main.Visible = false
+		end)
+	end
 end
 
+-- 平滑可缩放（四边+四角，RenderStepped 插值，修复释放时卡住/抖动）
 local function makeResizable(target: Frame, opts)
 	opts = opts or {}
 	if not target or not target:IsA("Frame") then return end
@@ -360,45 +376,63 @@ local function makeResizable(target: Frame, opts)
 	local dragging = false
 	local modeX, modeY = 0, 0
 	local startMouse, startSize, startPos
+	local goalSize, goalPos
+	local stepConn, endConn
 
-	local function beginResize(mx, my)
+	local function applyImmediate(sizeXY, posXY)
+		target.Size = UDim2.new(0, sizeXY.X, 0, sizeXY.Y)
+		target.Position = UDim2.new(startPos.X.Scale, posXY.X, startPos.Y.Scale, posXY.Y)
+	end
+
+	local function lerpVec(a, b, t)
+		return Vector2.new(a.X + (b.X - a.X)*t, a.Y + (b.Y - a.Y)*t)
+	end
+
+	local function beginResize(mx, my, beganInput)
+		if dragging then return end
 		dragging = true
-		startMouse = UserInputService:GetMouseLocation()
+		modeX, modeY = mx, my
+		startMouse = beganInput.Position
 		startSize = target.AbsoluteSize
 		startPos = target.Position
-		modeX, modeY = mx, my
-	end
-	local function endResize()
-		dragging = false
-	end
 
-	local function bind(h, mx, my)
-		h.InputBegan:Connect(function(input)
+		goalSize = Vector2.new(startSize.X, startSize.Y)
+		goalPos = Vector2.new(startPos.X.Offset, startPos.Y.Offset)
+
+		if stepConn then stepConn:Disconnect() end
+		stepConn = RunService.RenderStepped:Connect(function(dt)
+			if not dragging then return end
+			-- 平滑到目标
+			local curSize = Vector2.new(target.Size.X.Offset, target.Size.Y.Offset)
+			local curPos  = Vector2.new(target.Position.X.Offset, target.Position.Y.Offset)
+			local alpha = math.clamp(dt * 18, 0, 1) -- 约 55ms 半衰
+			local s = lerpVec(curSize, goalSize, alpha)
+			local p = lerpVec(curPos, goalPos, alpha)
+			applyImmediate(s, p)
+		end)
+
+		if endConn then endConn:Disconnect() end
+		endConn = UserInputService.InputEnded:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				beginResize(mx, my)
-				input.Changed:Connect(function()
-					if input.UserInputState == Enum.UserInputState.End then
-						endResize()
-					end
-				end)
+				dragging = false
+				if stepConn then stepConn:Disconnect() stepConn = nil end
+				if endConn then endConn:Disconnect() endConn = nil end
+				-- 对齐一次目标，确保无残差
+				if goalSize and goalPos then
+					applyImmediate(goalSize, goalPos)
+				end
 			end
 		end)
 	end
 
-	bind(L, -1, 0) bind(R, 1, 0) bind(T, 0, -1) bind(B, 0, 1)
-	bind(TL, -1, -1) bind(TR, 1, -1) bind(BL, -1, 1) bind(BR, 1, 1)
-
-	UserInputService.InputChanged:Connect(function(input)
+	local function updateGoal()
 		if not dragging then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
-			return
-		end
 		local m = UserInputService:GetMouseLocation()
 		local dx = m.X - startMouse.X
 		local dy = m.Y - startMouse.Y
+
 		local newW = startSize.X
 		local newH = startSize.Y
-
 		if modeX == 1 then newW = startSize.X + dx end
 		if modeX == -1 then newW = startSize.X - dx end
 		if modeY == 1 then newH = startSize.Y + dy end
@@ -415,8 +449,25 @@ local function makeResizable(target: Frame, opts)
 		if modeY == 1 then offsetY = (newH - startSize.Y) / 2 end
 		if modeY == -1 then offsetY = (startSize.Y - newH) / 2 end
 
-		target.Size = UDim2.new(0, newW, 0, newH)
-		target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + offsetX, startPos.Y.Scale, startPos.Y.Offset + offsetY)
+		goalSize = Vector2.new(newW, newH)
+		goalPos  = Vector2.new(startPos.X.Offset + offsetX, startPos.Y.Offset + offsetY)
+	end
+
+	local function bind(h, mx, my)
+		h.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				beginResize(mx, my, input)
+			end
+		end)
+	end
+
+	bind(L, -1, 0) bind(R, 1, 0) bind(T, 0, -1) bind(B, 0, 1)
+	bind(TL, -1, -1) bind(TR, 1, -1) bind(BL, -1, 1) bind(BR, 1, 1)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			updateGoal()
+		end
 	end)
 end
 
@@ -434,7 +485,6 @@ local MainCorner = New("UICorner")
 MainCorner.CornerRadius = R.big
 MainCorner.Parent = Main
 
--- 主边框描边
 local MainStroke = New("UIStroke")
 MainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 MainStroke.Thickness = 1
@@ -457,8 +507,6 @@ Title.TextXAlignment = Enum.TextXAlignment.Left
 local TitleCorner = New("UICorner")
 TitleCorner.CornerRadius = R.big
 TitleCorner.Parent = Title
-
--- 液态玻璃（Title）
 glassify(Title, { Transparency = 0.15 })
 
 local OpenBtn = New("TextButton")
@@ -478,15 +526,13 @@ addPressFeedback(OpenBtn)
 
 makeDraggable(OpenBtn, OpenBtn)
 makeDraggable(Title, Main)
-
 makeResizable(Main, { MinSize = Vector2.new(360, 220), Grip = 8 })
 
 local TOGGLE = true
 OpenBtn.MouseButton1Click:Connect(function()
 	TOGGLE = not TOGGLE
-	Main.Visible = TOGGLE
 	OpenBtn.Text = (TOGGLE and "隐藏" or "打开")
-	if TOGGLE then popIn(Main) end
+	showMain(Main, TOGGLE)
 end)
 
 local Sidebar = New("Frame")
@@ -500,8 +546,6 @@ Sidebar.Size = dn(0, 106, 0, 238)
 local SidebarCorner = New("UICorner")
 SidebarCorner.CornerRadius = R.big
 SidebarCorner.Parent = Sidebar
-
--- 液态玻璃（Sidebar）
 glassify(Sidebar, { Transparency = 0.12 })
 
 local TabButtons = New("ScrollingFrame")
@@ -538,10 +582,9 @@ TabHolder.Size = dn(0, 324, 0, 238)
 local TabHolderCorner = New("UICorner")
 TabHolderCorner.CornerRadius = R.big
 TabHolderCorner.Parent = TabHolder
-
--- 液态玻璃（TabHolder）
 glassify(TabHolder, { Transparency = 0.10 })
 
+-- 通知
 local notificationHolder
 local notifAmount = 0
 local removedPos = nil
@@ -734,7 +777,6 @@ function library:SelectNotify(args)
 	notif.Paragraph.Text = args.Text
 	notif.Title.Text = args.Title
 
-	-- 按压反馈
 	addPressFeedback(notif.True)
 	addPressFeedback(notif.False)
 
@@ -962,7 +1004,6 @@ function library:CreateTab(tabName: string)
 		Corner.Parent = Btn
 
 		addPressFeedback(Btn)
-
 		Btn.MouseButton1Click:Connect(callback)
 	end
 
@@ -1251,11 +1292,11 @@ function library:CreateTab(tabName: string)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 				library.flags[key]:SetValue()
 				dragging = true
-				input.Changed:Connect(function()
-					if input.UserInputState == Enum.UserInputState.End then
-						dragging = false
-					end
-				end)
+			end
+		end)
+		UserInputService.InputEnded:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+				dragging = false
 			end
 		end)
 		UserInputService.InputChanged:Connect(function(input)
@@ -1399,13 +1440,13 @@ function library:CreateTab(tabName: string)
 				filterByText()
 			else
 				task.spawn(function()
-					task.wait(0.35)
+					task.wait(0.25)
 					Drop.Visible = false
 				end)
 			end
 			ToggleBtn.Text = open and "-" or "+"
 			local targetSize = open and (DropLayout.AbsoluteContentSize.Y + 12) or 0
-			tween:Create(Drop, { Size = dn(0, 312, 0, targetSize) }, 0.35, "Sine", "Out"):Play()
+			tween:Create(Drop, { Size = dn(0, 312, 0, targetSize) }, 0.28, "Sine", "Out"):Play()
 		end
 
 		DropLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
